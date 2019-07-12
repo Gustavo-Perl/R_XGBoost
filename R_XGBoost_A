@@ -1,0 +1,308 @@
+###########################################################################
+#################### IMPORTA LIBS E DEFINE ################################
+###########################################################################
+gc()
+rm(list = ls())
+library(caret)
+library(car)
+library(C50)
+library(ISLR)
+library(xgboost)
+library(MatrixModels)
+library(Matrix)
+library(gmodels)
+library(e1071)
+library(devtools)
+library(parallel)
+library(doParallel)
+library(Information)
+library(InformationValue)
+library(ROCR)
+library(dplyr)
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+
+###########################################################################
+#################### IMPORTO BASE E TRATO VARIAVEIS #######################
+###########################################################################
+AF_RAIZ                 <- read.csv(file = "MyDirectory", 
+                         sep = ";", 
+                         stringsAsFactors = FALSE
+                         #,na.strings = c("",".","NA")
+                         )
+#AF_RAIZ[is.na(AF_RAIZ)] <- 0
+AF_RAIZ$STATUS_N        <- as.numeric(AF_RAIZ$STATUS_N)
+x <- substr(AF_RAIZ$SAFRA_EVENTO_MES,1,2)
+y <- substr(AF_RAIZ$SAFRA_EVENTO_MES,3,5)
+z <- substr(AF_RAIZ$SAFRA_EVENTO_MES,6,9)
+AF_RAIZ$SAFRA_EVENTO_MES<- lubridate::ymd(paste0(year  = z, 
+                                                 month = y, 
+                                                 day   = x))
+AF_RAIZ <- subset(AF_RAIZ, MOSAIC_CODE == c(1,2)) 
+
+###########################################################################
+#################### SELECIONA AMOSTRAGEM #################################
+###########################################################################
+str(AF_RAIZ)
+set.seed(666)
+AF_RAIZ_random  <- AF_RAIZ[order(runif(NROW(AF_RAIZ))), ]
+AF_treino_valid <- subset(AF_RAIZ_random, SAFRA_EVENTO_MES != '2018-12-01') 
+smp_siz         <- floor(0.75*nrow(AF_treino_valid))
+for_train       <- sample(seq_len(nrow(AF_treino_valid)), size = smp_siz)
+
+AF_treino     <- AF_treino_valid[for_train, ]
+AF_validacao  <- AF_treino_valid[-for_train, ]
+
+teste         <- subset(AF_RAIZ_random,SAFRA_EVENTO_MES=='2018-12-01')
+teste_1       <- subset(teste, STATUS_N == 1)
+teste_0       <- subset(teste, STATUS_N == 0)
+smp_siz       <- floor(0.11*nrow(teste_0))
+for_train     <- sample(seq_len(nrow(teste_0)), size = smp_siz)
+AF_teste_0    <- teste_0[for_train,]
+AF_teste      <- rbind(teste_1,AF_teste_0)
+AF_teste      <- AF_teste[,]
+
+#CHECO SE A PROPORCAO DAS BASES EST�O CORRETA:
+prop.table(table(AF_RAIZ$STATUS_N))
+prop.table(table(AF_treino$STATUS_N))
+prop.table(table(AF_validacao$STATUS_N))
+prop.table(table(AF_teste$STATUS_N))
+
+###########################################################################
+#################### AJUSTO OS CAMPOS #####################################
+###########################################################################
+for (i in 1:NCOL(AF_treino))
+  AF_treino[,i]     <- as.numeric(AF_treino[,i])
+for (i in 1:NCOL(AF_validacao))
+  AF_validacao[,i]  <- as.numeric(AF_validacao[,i])
+for (i in 1:NCOL(AF_teste))
+  AF_teste[,i]      <- as.numeric(AF_teste[,i])
+AF_treino$SAFRA_EVENTO_MES    <- as.Date(AF_treino$SAFRA_EVENTO_MES, 
+                                         origin = "1970-01-01")
+AF_validacao$SAFRA_EVENTO_MES <- as.Date(AF_validacao$SAFRA_EVENTO_MES, 
+                                         origin = "1970-01-01")
+AF_teste$SAFRA_EVENTO_MES     <- as.Date(AF_teste$SAFRA_EVENTO_MES, 
+                                         origin = "1970-01-01")
+
+###########################################################################
+#################### CONFIGURO PRIMEIRA XGBOOST ###########################
+###########################################################################
+AF_xgb <- xgboost(data            = data.matrix(AF_treino[,c(-1,-2,-3)]),
+                  label           = AF_treino$STATUS_N,
+                  verbose         = 0,
+                  booster         = 'gblinear',
+                  eta             = 0.05,     #melhor � 0.003: preven��o contra overfitting - VALORES T�PICOS: [0.01, 0.2]
+                  objective       = 'binary:logistic',
+                  eval_metric     = 'error',  #erro correto para class.bin.
+                  nrounds         = 1000,
+                  seed            = 666)
+importance <- xgb.importance(model = AF_xgb)
+importance$ajustado <- abs(importance$Weight)
+importance$'%' <- importance$ajustado/sum(importance$ajustado)
+importance$'% acum' <- importance[1,4]
+for(i in 2:nrow(importance))
+{
+  importance[i,5] <- importance[i,4] + importance [i-1,5]
+}
+xgb.plot.importance(importance,
+                    rel_to_first = FALSE,
+                    xlab = "Importancia Relativa")
+###########################################################################
+#################### CONFIGURO SEGUNDA XGBOOST ############################
+###########################################################################
+to.remove <- subset(importance, `% acum` > 0.95)
+AF_treino <- AF_treino[, !colnames(AF_treino) %in% to.remove$Feature]
+AF_validacao <- AF_validacao[, !colnames(AF_validacao) %in% to.remove$Feature]
+AF_teste <- AF_teste[, !colnames(AF_teste) %in% to.remove$Feature]
+
+AF_xgb <- xgboost(data            = data.matrix(AF_treino[,c(-1,-2,-3)]),
+                  label           = AF_treino$STATUS_N,
+                  verbose         = 0,
+                  booster         = 'gblinear',
+                  eta             = 0.006,     #melhor � 0.006: preven��o contra overfitting - VALORES T�PICOS: [0.01, 0.2]
+                  objective       = 'binary:logistic',
+                  eval_metric     = 'error',  #erro correto para class.bin.
+                  nrounds         = 1000,
+                  seed            = 666)
+importance <- xgb.importance(model = AF_xgb)
+importance$ajustado <- abs(importance$Weight)
+importance$'%' <- importance$ajustado/sum(importance$ajustado)
+importance$'% acum' <- importance[1,4]
+for(i in 2:nrow(importance))
+{
+  importance[i,5] <- importance[i,4] + importance [i-1,5]
+}
+xgb.plot.importance(importance,
+                    rel_to_first = FALSE,
+                    xlab = "Importancia Relativa")
+
+###########################################################################
+#################### PREDI��O DA XGBOOST ##################################
+###########################################################################
+AF_xgb_pred_treino <- predict(AF_xgb,
+                              data.matrix(AF_treino[,c(-1,-2,-3)]),
+                              type = "prob")
+AF_xgb_pred_valid <- predict(AF_xgb,
+                             data.matrix(AF_validacao[,c(-1,-2,-3)]),
+                             type = "prob")
+AF_xgb_pred_teste <- predict(AF_xgb,
+                             data.matrix(AF_teste[,c(-1,-2,-3)]),
+                             type = "prob")
+###########################################################################
+#################### AVALIA A PERFORMANCE DO MODELO #######################
+###########################################################################
+pred_xgb_treino <- prediction(AF_xgb_pred_treino,
+                              AF_treino$STATUS_N)
+ROC_treino <-ROCR::performance(pred_xgb_treino,
+                               measure = "tpr",
+                               x.measure = "fpr")
+ks_treino   <- max(attr(ROC_treino,
+                       "y.values")[[1]] - (attr(ROC_treino,
+                                                "x.values")[[1]]))
+
+pred_xgb_valid <- prediction(AF_xgb_pred_valid,
+                             AF_validacao$STATUS_N)
+ROC_valid <-ROCR::performance(pred_xgb_valid,
+                        measure = "tpr",
+                        x.measure = "fpr")
+ks_valid   <- max(attr(ROC_valid,
+                 "y.values")[[1]] - (attr(ROC_valid,
+                                          "x.values")[[1]]))
+
+pred_xgb_teste <- prediction(AF_xgb_pred_teste,
+                             AF_teste$STATUS_N)
+ROC_teste <-ROCR::performance(pred_xgb_teste,
+                              measure = "tpr",
+                              x.measure = "fpr")
+ks_teste <- max(attr(ROC_teste,
+                "y.values")[[1]] - (attr(ROC_teste,
+                                         "x.values")[[1]]))
+
+ks_treino
+ks_valid
+ks_teste
+
+###########################################################################
+#################### PLOTA GR�FICOS #######################################
+###########################################################################
+plot(ROC_teste,
+     col = "blue",
+     main=paste0('KS Treino = ',
+                 round(ks_treino*100,1),
+                 '% - KS Valid. = ',
+                 round(ks_valid*100,1),
+                 '% - KS Teste = ',
+                 round(ks_teste*100,1),'%'))
+plot(ROC_treino,
+     add = TRUE,
+     col = "red")
+plot(ROC_valid,
+     add = TRUE,
+     col = "yellow")
+lines(x=c(0,1),
+      y=c(0,1))
+
+###########################################################################
+#################### CALCULA AUC - AREA UNDER the CURVE ###################
+###########################################################################
+ROC.auc <- performance(pred_xgb_teste,measure = "auc")
+unlist(ROC.auc@y.values)
+###########################################################################
+#################### CALCULA ESTABILIDADE DO KS ###########################
+###########################################################################
+ks_vector <- NULL
+interaction_vector <- NULL
+for(i in 1:200)
+{
+  base.teste.ks <- sample_n(AF_treino, 10000, replace =TRUE)
+  AF_xgb <- xgboost(data            = data.matrix(base.teste.ks[,c(-1,-2,-3)]),
+                    label           = base.teste.ks$STATUS_N,
+                    verbose         = 0,    #define avisos como off
+                    booster         = 'gblinear',
+                    eta             = 0.006,     #melhor � 0.003: preven��o contra overfitting - VALORES T�PICOS: [0.01, 0.2]
+                    objective       = 'binary:logistic',
+                    eval_metric     = 'error',  #erro correto para class.bin.
+                    nrounds         = 1000,
+                    seed            = 666)
+  pred_treino_teste.ks <- predict(AF_xgb,
+                                  data.matrix(base.teste.ks[,c(-1,-2,-3)]),
+                                  type = "prob")
+  pred_xgb_treino_teste.ks <- prediction(pred_treino_teste.ks,
+                                         base.teste.ks$STATUS_N)
+  ROC_treino_teste.ks <-ROCR::performance(pred_xgb_treino_teste.ks,
+                                          measure = "tpr",
+                                          x.measure = "fpr")
+  ks_treino_teste.ks   <- max(attr(ROC_treino_teste.ks,
+                                   "y.values")[[1]] - (attr(ROC_treino_teste.ks,
+                                                            "x.values")[[1]]))
+  ks_vector          <- rbind(ks_vector,
+                              ks_treino_teste.ks)
+  interaction_vector <- rbind(interaction_vector,
+                              i)
+  print(i)
+}
+ks.base <- data.frame('ks'=ks_vector, 'interaction'=interaction_vector)
+ks.base
+plot(ks.base$ks,
+     type = "l",
+     main = paste0("Distribui��o KS x Intera��es"),
+     xlab = "N�mero da Intera��o",
+     ylab = "KS",
+     ylim = c(0,1),
+     xlim = c(min(ks.base$interaction), max(ks.base$interaction)))
+###########################################################################
+#################### PREPARA ALAVANCAGEM '#################################
+###########################################################################
+table_treino <- data.frame(AF_xgb_pred_treino, AF_treino$STATUS_N, AF_treino$CPF_AJUST)
+colnames(table_treino) <- c("SCORE","STATUS_N","CPF_9")
+table_treino$FAIXA_SCORE <- ifelse(table_treino$SCORE < 0.1000001, "0 - 100",
+                                   ifelse(table_treino$SCORE < 0.2000001, "101 - 200",
+                                          ifelse(table_treino$SCORE < 0.3000001, "201 - 300",ifelse(table_treino$SCORE < 0.4000001, "301 - 400",
+                                                 ifelse(table_treino$SCORE < 0.5000001, "401 - 500",
+                                                        ifelse(table_treino$SCORE < 0.6000001, "501 - 600",
+                                                               ifelse(table_treino$SCORE < 0.7000001, "601 - 700",
+                                                                      ifelse(table_treino$SCORE < 0.8000001, "701 - 800",
+                                                                             ifelse(table_treino$SCORE < 0.9000001, "801 - 900","901-1000"
+                                                                             )))))))))
+treino_alavancagem_agroup <- aggregate(cbind(count = CPF_9) ~ FAIXA_SCORE+STATUS_N, 
+                                       data = table_treino, 
+                                       FUN = function(x){NROW(x)})
+
+table_teste <- data.frame(AF_xgb_pred_teste, AF_teste$STATUS_N, AF_teste$CPF_AJUST)
+colnames(table_teste) <- c("SCORE","STATUS_N","CPF_9")
+table_teste$FAIXA_SCORE <- ifelse(table_teste$SCORE < 0.1000001, "0 - 100",
+                                   ifelse(table_teste$SCORE < 0.2000001, "101 - 200",
+                                          ifelse(table_teste$SCORE < 0.3000001, "201 - 300",
+                                                 ifelse(table_teste$SCORE < 0.4000001, "301 - 400",
+                                                        ifelse(table_teste$SCORE < 0.5000001, "401 - 500",
+                                                               ifelse(table_teste$SCORE < 0.6000001, "501 - 600",
+                                                                      ifelse(table_teste$SCORE < 0.7000001, "601 - 700",
+                                                                             ifelse(table_teste$SCORE < 0.8000001, "701 - 800",
+                                                                                    ifelse(table_teste$SCORE < 0.9000001, "801 - 900","901-1000"
+                                                                                    )))))))))
+teste_alavancagem_agroup <- aggregate(cbind(count = CPF_9) ~ FAIXA_SCORE+STATUS_N, 
+                                       data = table_teste, 
+                                       FUN = function(x){NROW(x)})
+
+table_validacao <- data.frame(AF_xgb_pred_valid, AF_validacao$STATUS_N, AF_validacao$CPF_AJUST)
+colnames(table_validacao) <- c("SCORE","STATUS_N","CPF_9")
+table_validacao$FAIXA_SCORE <- ifelse(table_validacao$SCORE < 0.1000001, "0 - 100",
+                                   ifelse(table_validacao$SCORE < 0.2000001, "101 - 200",
+                                          ifelse(table_validacao$SCORE < 0.3000001, "201 - 300",
+                                                 ifelse(table_validacao$SCORE < 0.4000001, "301 - 400",
+                                                        ifelse(table_validacao$SCORE < 0.5000001, "401 - 500",
+                                                               ifelse(table_validacao$SCORE < 0.6000001, "501 - 600",
+                                                                      ifelse(table_validacao$SCORE < 0.7000001, "601 - 700",
+                                                                             ifelse(table_validacao$SCORE < 0.8000001, "701 - 800",
+                                                                                    ifelse(table_validacao$SCORE < 0.9000001, "801 - 900","901-1000"
+                                                                                    )))))))))
+validacao_alavancagem_agroup <- aggregate(cbind(count = CPF_9) ~ FAIXA_SCORE+STATUS_N, 
+                                       data = table_validacao, 
+                                       FUN = function(x){NROW(x)})
+
+write.csv(table_treino,
+          file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\2.PERFORMANCE\\ALAVANCAGEM_TREINO_A.csv")
+write.csv(table_validacao,
+          file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\2.PERFORMANCE\\ALAVANCAGEM_VALIDACAO_A.csv")
+write.csv(table_teste,
+          file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\2.PERFORMANCE\\ALAVANCAGEM_TESTE_A.csv")
