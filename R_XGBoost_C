@@ -222,7 +222,6 @@ unlist(ROC.auc@y.values)
 ###########################################################################
 ks_vector <- NULL
 interaction_vector <- NULL
-AF_treino$SCORE <- NULL
 for(i in 1:200)
 {
   base.teste.ks <- sample_n(AF_treino, 0.05*nrow(AF_treino), replace =TRUE)
@@ -265,7 +264,6 @@ plot(ks.base$ks,
 
 ks_vector <- NULL
 interaction_vector <- NULL
-AF_validacao$SCORE <- NULL
 for(i in 1:200)
 {
   base.teste.ks <- sample_n(AF_validacao, 0.05*nrow(AF_validacao), replace =TRUE)
