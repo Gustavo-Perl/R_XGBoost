@@ -38,7 +38,7 @@ z <- substr(AF_RAIZ$SAFRA_EVENTO_MES,6,9)
 AF_RAIZ$SAFRA_EVENTO_MES<- lubridate::ymd(paste0(year  = z, 
                                                  month = y, 
                                                  day   = x))
-AF_RAIZ <- subset(AF_RAIZ, MOSAIC_CODE == c(1,2)) 
+####CONFIDENTIAL CODE####
 
 ###########################################################################
 #################### SELECIONA AMOSTRAGEM #################################
