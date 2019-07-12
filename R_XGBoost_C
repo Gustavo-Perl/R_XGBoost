@@ -25,7 +25,7 @@ registerDoParallel(cluster)
 ###########################################################################
 #################### IMPORTO BASE E TRATO VARIAVEIS #######################
 ###########################################################################
-AF_RAIZ                 <- read.csv(file = "MyDirectory", 
+AF_RAIZ                 <- read.csv(file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\REDES NEURAIS\\AF\\BASE_AF_10X.csv", 
                          sep = ";", 
                          stringsAsFactors = FALSE
                          #,na.strings = c("",".","NA")
@@ -38,7 +38,7 @@ z <- substr(AF_RAIZ$SAFRA_EVENTO_MES,6,9)
 AF_RAIZ$SAFRA_EVENTO_MES<- lubridate::ymd(paste0(year  = z, 
                                                  month = y, 
                                                  day   = x))
-#### CONFIDENTIAL CODE ####
+AF_RAIZ <- subset(AF_RAIZ, MOSAIC_CODE = c(6,7,8)) 
 
 ###########################################################################
 #################### SELECIONA AMOSTRAGEM #################################
@@ -222,9 +222,10 @@ unlist(ROC.auc@y.values)
 ###########################################################################
 ks_vector <- NULL
 interaction_vector <- NULL
+AF_treino$SCORE <- NULL
 for(i in 1:200)
 {
-  base.teste.ks <- sample_n(AF_treino, 0.05*ncol(AF_treino), replace =TRUE)
+  base.teste.ks <- sample_n(AF_treino, 0.05*nrow(AF_treino), replace =TRUE)
   AF_xgb <- xgboost(data            = data.matrix(base.teste.ks[,c(-1,-2,-3)]),
                     label           = base.teste.ks$STATUS_N,
                     verbose         = 0,    #define avisos como off
@@ -264,9 +265,10 @@ plot(ks.base$ks,
 
 ks_vector <- NULL
 interaction_vector <- NULL
+AF_validacao$SCORE <- NULL
 for(i in 1:200)
 {
-  base.teste.ks <- sample_n(AF_validacao, 0.05*ncol(AF_validacao), replace =TRUE)
+  base.teste.ks <- sample_n(AF_validacao, 0.05*nrow(AF_validacao), replace =TRUE)
   AF_xgb <- xgboost(data            = data.matrix(base.teste.ks[,c(-1,-2,-3)]),
                     label           = base.teste.ks$STATUS_N,
                     verbose         = 0,    #define avisos como off
@@ -390,8 +392,8 @@ Alavancagem_Teste_C$'%mau acum' <- P_mau_acum_teste
 Alavancagem_Teste_C$'%bom acum' <- P_bom_acum_teste
 Alavancagem_Teste_C$'KS' <- KS_teste
 write.csv(Alavancagem_Treino_C,
-          file = "OutputDirectory")
+          file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\2.PERFORMANCE\\ALAVANCAGEM_TREINO_C.csv")
 write.csv(Alavancagem_Valid_C,
-          file = "OutputDirectory")
+          file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\2.PERFORMANCE\\ALAVANCAGEM_VALIDACAO_C.csv")
 write.csv(Alavancagem_Teste_C,
-          file = "OutputDirectory")
+          file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\2.PERFORMANCE\\ALAVANCAGEM_TESTE_C.csv")
