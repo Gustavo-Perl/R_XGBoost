@@ -25,7 +25,7 @@ registerDoParallel(cluster)
 ###########################################################################
 #################### IMPORTO BASE E TRATO VARIAVEIS #######################
 ###########################################################################
-AF_RAIZ                 <- read.csv(file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\REDES NEURAIS\\AF\\BASE_AF_10X.csv", 
+AF_RAIZ                 <- read.csv(file = "MyDirectory", 
                          sep = ";", 
                          stringsAsFactors = FALSE
                          #,na.strings = c("",".","NA")
@@ -38,7 +38,7 @@ z <- substr(AF_RAIZ$SAFRA_EVENTO_MES,6,9)
 AF_RAIZ$SAFRA_EVENTO_MES<- lubridate::ymd(paste0(year  = z, 
                                                  month = y, 
                                                  day   = x))
-AF_RAIZ <- subset(AF_RAIZ, MOSAIC_CODE = c(6,7,8)) 
+#### CONFIDENTIAL CODE ####
 
 ###########################################################################
 #################### SELECIONA AMOSTRAGEM #################################
@@ -392,8 +392,8 @@ Alavancagem_Teste_C$'%mau acum' <- P_mau_acum_teste
 Alavancagem_Teste_C$'%bom acum' <- P_bom_acum_teste
 Alavancagem_Teste_C$'KS' <- KS_teste
 write.csv(Alavancagem_Treino_C,
-          file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\2.PERFORMANCE\\ALAVANCAGEM_TREINO_C.csv")
+          file = "MyDirectory")
 write.csv(Alavancagem_Valid_C,
-          file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\2.PERFORMANCE\\ALAVANCAGEM_VALIDACAO_C.csv")
+          file = "MyDirectory")
 write.csv(Alavancagem_Teste_C,
-          file = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\2.PERFORMANCE\\ALAVANCAGEM_TESTE_C.csv")
+          file = "MyDirectory")
