@@ -47,22 +47,14 @@ str(AF_RAIZ)
 set.seed(666)
 AF_RAIZ_random  <- AF_RAIZ[order(runif(NROW(AF_RAIZ))), ]
 AF_treino_valid <- subset(AF_RAIZ_random, SAFRA_EVENTO_MES != '2018-12-01') 
-smp_siz         <- floor(0.75*nrow(AF_treino_valid))
+smp_siz         <- floor(0.5*nrow(AF_treino_valid))
 for_train       <- sample(seq_len(nrow(AF_treino_valid)), size = smp_siz)
 
 AF_treino     <- AF_treino_valid[for_train, ]
 AF_validacao  <- AF_treino_valid[-for_train, ]
+AF_teste      <- subset(AF_RAIZ_random,SAFRA_EVENTO_MES=='2018-12-01')
 
-teste         <- subset(AF_RAIZ_random,SAFRA_EVENTO_MES=='2018-12-01')
-teste_1       <- subset(teste, STATUS_N == 1)
-teste_0       <- subset(teste, STATUS_N == 0)
-smp_siz       <- floor(0.20*nrow(teste_0))
-for_train     <- sample(seq_len(nrow(teste_0)), size = smp_siz)
-AF_teste_0    <- teste_0[for_train,]
-AF_teste      <- rbind(teste_1,AF_teste_0)
-AF_teste      <- AF_teste[,]
-
-#CHECO SE A PROPORCAO DAS BASES EST�O CORRETA:
+#CHECO SE A PROPORCAO DAS BASES ESTÃO CORRETA:
 prop.table(table(AF_RAIZ$STATUS_N))
 prop.table(table(AF_treino$STATUS_N))
 prop.table(table(AF_validacao$STATUS_N))
@@ -70,11 +62,7 @@ prop.table(table(AF_teste$STATUS_N))
 rm(AF_RAIZ_random,
    AF_treino_valid,
    smp_siz,
-   for_train,
-   teste,
-   teste_1,
-   teste_0,
-   AF_teste_0)
+   for_train)
 ###########################################################################
 #################### AJUSTO OS CAMPOS #####################################
 ###########################################################################
