@@ -21,16 +21,14 @@ library(ROCR)
 library(dplyr)
 cluster <- makeCluster(detectCores() - 1)
 registerDoParallel(cluster)
-
 ###########################################################################
 #################### IMPORTO BASE E TRATO VARIAVEIS #######################
 ###########################################################################
-AF_RAIZ                 <- read.csv(file = "MyDirectory", 
-                         sep = ";", 
-                         stringsAsFactors = FALSE
-                         #,na.strings = c("",".","NA")
-                         )
-#AF_RAIZ[is.na(AF_RAIZ)] <- 0
+mydirectory = "MyDirectory"
+AF_RAIZ     <- read.csv(file = paste(mydirectory,
+                                     "BASE_AF_10X.csv", sep = "\\"),
+                        sep = ";", 
+                        stringsAsFactors = FALSE)
 AF_RAIZ$STATUS_N        <- as.numeric(AF_RAIZ$STATUS_N)
 x <- substr(AF_RAIZ$SAFRA_EVENTO_MES,1,2)
 y <- substr(AF_RAIZ$SAFRA_EVENTO_MES,3,5)
@@ -39,7 +37,9 @@ AF_RAIZ$SAFRA_EVENTO_MES<- lubridate::ymd(paste0(year  = z,
                                                  month = y, 
                                                  day   = x))
 #### CONFIDENTIAL CODE ####
-
+rm(x,
+   y,
+   z)
 ###########################################################################
 #################### SELECIONA AMOSTRAGEM #################################
 ###########################################################################
@@ -62,12 +62,19 @@ AF_teste_0    <- teste_0[for_train,]
 AF_teste      <- rbind(teste_1,AF_teste_0)
 AF_teste      <- AF_teste[,]
 
-#CHECO SE A PROPORCAO DAS BASES ESTÃO CORRETA:
+#CHECO SE A PROPORCAO DAS BASES EST�O CORRETA:
 prop.table(table(AF_RAIZ$STATUS_N))
 prop.table(table(AF_treino$STATUS_N))
 prop.table(table(AF_validacao$STATUS_N))
 prop.table(table(AF_teste$STATUS_N))
-
+rm(AF_RAIZ_random,
+   AF_treino_valid,
+   smp_siz,
+   for_train,
+   teste,
+   teste_1,
+   teste_0,
+   AF_teste_0)
 ###########################################################################
 #################### AJUSTO OS CAMPOS #####################################
 ###########################################################################
@@ -91,7 +98,7 @@ AF_xgb <- xgboost(data            = data.matrix(AF_treino[,c(-1,-2,-3)]),
                   label           = AF_treino$STATUS_N,
                   verbose         = 0,
                   booster         = 'gblinear',
-                  eta             = 0.05,     #melhor é 0.05: prevenção contra overfitting - VALORES TÍPICOS: [0.01, 0.2]
+                  eta             = 0.05,     #melhor � 0.05: preven��o contra overfitting - VALORES T�PICOS: [0.01, 0.2]
                   objective       = 'binary:logistic',
                   eval_metric     = 'error',  #erro correto para class.bin.
                   nrounds         = 1000,
@@ -104,11 +111,18 @@ for(i in 2:nrow(importance))
 {
   importance[i,5] <- importance[i,4] + importance [i-1,5]
 }
-x11()
+
+pdf(file = paste(mydirectory,
+                 "1_Importancia_100.pdf",
+                 sep = "\\"),
+    width=6,
+    height=6)
 xgb.plot.importance(importance,
                     rel_to_first = FALSE,
                     main = "Importancia das Variaveis - 100%",
                     xlab = "Importancia na Resposta")
+dev.off()
+rm(AF_xgb)
 ###########################################################################
 #################### CONFIGURO SEGUNDA XGBOOST ############################
 ###########################################################################
@@ -122,7 +136,7 @@ AF_xgb <- xgboost(data            = data.matrix(AF_treino[,c(-1,-2,-3)]),
                   label           = AF_treino$STATUS_N,
                   verbose         = 0,
                   booster         = 'gblinear',
-                  eta             = 0.006,     #melhor é 0.006: prevenção contra overfitting - VALORES TÍPICOS: [0.01, 0.2]
+                  eta             = 0.006,     #melhor � 0.006: preven��o contra overfitting - VALORES T�PICOS: [0.01, 0.2]
                   objective       = 'binary:logistic',
                   eval_metric     = 'error',  #erro correto para class.bin.
                   nrounds         = 1000,
@@ -135,14 +149,20 @@ for(i in 2:nrow(importance))
 {
   importance[i,5] <- importance[i,4] + importance [i-1,5]
 }
-x11()
+pdf(file = paste(mydirectory,
+                 "2_Importancia_95.pdf",
+                 sep = "\\"),
+    width=6,
+    height=6)
 xgb.plot.importance(importance,
                     rel_to_first = FALSE,
                     main = "Importancia das Variaveis - 95%",
                     xlab = "Importancia na Resposta")
-
+dev.off()
+rm(to.remove,
+   importance)
 ###########################################################################
-#################### PREDIÇÃO DA XGBOOST ##################################
+#################### PREDI��O DA XGBOOST ##################################
 ###########################################################################
 AF_treino$SCORE <- NULL
 AF_treino$SCORE <- predict(AF_xgb,
@@ -158,6 +178,7 @@ AF_teste$SCORE <- NULL
 AF_teste$SCORE <- predict(AF_xgb,
                           data.matrix(AF_teste[,c(-1,-2,-3)]),
                           type = "prob")
+rm(AF_xgb)
 ###########################################################################
 #################### AVALIA A PERFORMANCE DO MODELO #######################
 ###########################################################################
@@ -191,11 +212,16 @@ ks_teste <- max(attr(ROC_teste,
 ks_treino
 ks_valid
 ks_teste
-
+rm(pred_xgb_treino,
+   pred_xgb_valid)
 ###########################################################################
-#################### PLOTA GRÁFICOS #######################################
+#################### PLOTA GR�FICOS #######################################
 ###########################################################################
-x11()
+pdf(file = paste(mydirectory,
+                 "3_ROC_Curves.pdf",
+                 sep = "\\"),
+    width=6,
+    height=6)
 plot(ROC_teste,
      col = "blue",
      main=paste0('KS Treino = ',
@@ -212,12 +238,20 @@ plot(ROC_valid,
      col = "yellow")
 lines(x=c(0,1),
       y=c(0,1))
-
+dev.off()
+rm(ks_treino,
+   ks_valid,
+   ks_teste,
+   ROC_treino,
+   ROC_valid,
+   ROC_teste)
 ###########################################################################
 #################### CALCULA AUC - AREA UNDER the CURVE ###################
 ###########################################################################
 ROC.auc <- performance(pred_xgb_teste,measure = "auc")
 unlist(ROC.auc@y.values)
+rm(ROC.auc,
+   pred_xgb_teste)
 ###########################################################################
 #################### CALCULA ESTABILIDADE DO KS ###########################
 ###########################################################################
@@ -230,7 +264,7 @@ for(i in 1:200)
                     label           = base.teste.ks$STATUS_N,
                     verbose         = 0,    #define avisos como off
                     booster         = 'gblinear',
-                    eta             = 0.006,     #melhor é 0.006: prevenção contra overfitting - VALORES TÍPICOS: [0.01, 0.2]
+                    eta             = 0.006,     #melhor � 0.006: preven��o contra overfitting - VALORES T�PICOS: [0.01, 0.2]
                     objective       = 'binary:logistic',
                     eval_metric     = 'error',  #erro correto para class.bin.
                     nrounds         = 1000,
@@ -252,27 +286,33 @@ for(i in 1:200)
                               i)
   print(i)
 }
-ks.base <- data.frame('ks'=ks_vector, 'interaction'=interaction_vector)
+ks.base <- data.frame('ks'=ks_vector,
+                      'interaction'=interaction_vector)
 ks.base
-x11()
+pdf(file = paste(mydirectory,
+                 "4_Distribui��o_KS_Treino.pdf",
+                 sep = "\\"),
+    width=6,
+    height=6)
 plot(ks.base$ks,
      type = "l",
-     main = paste0("Distribuição KS x 200 amostras de Treino"),
-     xlab = "Número da Interação",
+     main = paste0("Distribui��o KS x 200 amostras de Treino"),
+     xlab = "N�mero da Intera��o",
      ylab = "KS",
      ylim = c(0,1),
      xlim = c(min(ks.base$interaction), max(ks.base$interaction)))
+dev.off()
 
 ks_vector <- NULL
 interaction_vector <- NULL
 for(i in 1:200)
 {
-  base.teste.ks <- sample_n(AF_treino, 0.05*nrow(AF_validacao), replace =TRUE)
+  base.teste.ks <- sample_n(AF_validacao, 0.05*nrow(AF_validacao), replace =TRUE)
   AF_xgb <- xgboost(data            = data.matrix(base.teste.ks[,c(-1,-2,-3)]),
                     label           = base.teste.ks$STATUS_N,
                     verbose         = 0,    #define avisos como off
                     booster         = 'gblinear',
-                    eta             = 0.006,     #melhor é 0.006: prevenção contra overfitting - VALORES TÍPICOS: [0.01, 0.2]
+                    eta             = 0.006,     #melhor � 0.006: preven��o contra overfitting - VALORES T�PICOS: [0.01, 0.2]
                     objective       = 'binary:logistic',
                     eval_metric     = 'error',  #erro correto para class.bin.
                     nrounds         = 1000,
@@ -296,18 +336,34 @@ for(i in 1:200)
 }
 ks.base <- data.frame('ks'=ks_vector, 'interaction'=interaction_vector)
 ks.base
-x11()
+pdf(file = paste(mydirectory,
+                 "5_Distribui��o_KS_Validacao.pdf",
+                 sep = "\\"),
+    width=6,
+    height=6)
 plot(ks.base$ks,
      type = "l",
-     main = paste0("Distribuição KS x 200 amostras de Validacao"),
-     xlab = "Número da Interação",
+     main = paste0("Distribui��o KS x 200 amostras de Validacao"),
+     xlab = "N�mero da Intera��o",
      ylab = "KS",
      ylim = c(0,1),
      xlim = c(min(ks.base$interaction), max(ks.base$interaction)))
+dev.off()
+rm(ks_vector,
+   interaction_vector,
+   base.teste.ks,
+   AF_xgb,
+   pred_xgb_treino_teste.ks,
+   pred_xgb_valid_teste.ks,
+   ROC_treino_teste.ks,
+   ROC_valid_teste.ks,
+   ks_treino_teste.ks,
+   ks_valid_teste.ks,
+   ks.base)
 ###########################################################################
 #################### PREPARA ALAVANCAGEM '#################################
 ###########################################################################
-Alavancagem_Treino_C <- AF_treino %>% 
+Alavancagem_Treino_A <- AF_treino %>% 
   mutate(FX_SCORE = ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=11),type = 5)[2],"J",
                            ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=11),type = 5)[3],"I",
                                   ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=11),type = 5)[4],"H",
@@ -321,9 +377,10 @@ Alavancagem_Treino_C <- AF_treino %>%
   summarise(qtd_tot = n(),
             mix = n()/nrow(AF_treino),
             qtd_bom = sum(STATUS_N == 1, na.rm = T),
-            qtd_mau = sum(STATUS_N == 0, na.rm = T)) %>% 
-  mutate(ODD = (qtd_bom/qtd_tot)/(qtd_mau/qtd_tot))
-Alavancagem_Valid_C <- AF_validacao %>% 
+            qtd_mau = sum(STATUS_N == 0, na.rm = T)) %>%
+  mutate(ODD = (qtd_bom/sum(qtd_bom))/(qtd_mau/sum(qtd_mau)))
+
+Alavancagem_Valid_A <- AF_validacao %>% 
   mutate(FX_SCORE = ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=11),type = 5)[2],"J",
                            ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=11),type = 5)[3],"I",
                                   ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=11),type = 5)[4],"H",
@@ -337,9 +394,10 @@ Alavancagem_Valid_C <- AF_validacao %>%
   summarise(qtd_tot = n(),
             mix = n()/nrow(AF_validacao),
             qtd_bom = sum(STATUS_N == 1, na.rm = T),
-            qtd_mau = sum(STATUS_N == 0, na.rm = T)) %>% 
-  mutate(ODD = (qtd_bom/qtd_tot)/(qtd_mau/qtd_tot))
-Alavancagem_Teste_C <- AF_teste %>% 
+            qtd_mau = sum(STATUS_N == 0, na.rm = T)) %>%
+  mutate(ODD = (qtd_bom/sum(qtd_bom))/(qtd_mau/sum(qtd_mau)))
+
+Alavancagem_Teste_A <- AF_teste %>% 
   mutate(FX_SCORE = ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=11),type = 5)[2],"J",
                            ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=11),type = 5)[3],"I",
                                   ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=11),type = 5)[4],"H",
@@ -353,8 +411,8 @@ Alavancagem_Teste_C <- AF_teste %>%
   summarise(qtd_tot = n(),
             mix = n()/nrow(AF_teste),
             qtd_bom = sum(STATUS_N == 1, na.rm = T),
-            qtd_mau = sum(STATUS_N == 0, na.rm = T)) %>% 
-  mutate(ODD = (qtd_bom/qtd_tot)/(qtd_mau/qtd_tot))
+            qtd_mau = sum(STATUS_N == 0, na.rm = T))  %>%
+  mutate(ODD = (qtd_bom/sum(qtd_bom))/(qtd_mau/sum(qtd_mau)))
 
 P_mau_acum_treino <- NULL
 P_bom_acum_treino <- NULL
@@ -367,32 +425,43 @@ KS_valid <- NULL
 KS_teste <- NULL
 for(i in 1:10)
 {
-  P_mau_acum_treino[i] <- sum(Alavancagem_Treino_C[1:i,5])/sum(Alavancagem_Treino_C[1:10,5])
-  P_mau_acum_valid[i] <- sum(Alavancagem_Treino_C[1:i,5])/sum(Alavancagem_Treino_C[1:10,5])
-  P_mau_acum_teste[i] <- sum(Alavancagem_Treino_C[1:i,5])/sum(Alavancagem_Treino_C[1:10,5])
+  P_mau_acum_treino[i] <- sum(Alavancagem_Treino_A[1:i,5])/sum(Alavancagem_Treino_A[1:10,5])
+  P_mau_acum_valid[i] <- sum(Alavancagem_Valid_A[1:i,5])/sum(Alavancagem_Valid_A[1:10,5])
+  P_mau_acum_teste[i] <- sum(Alavancagem_Teste_A[1:i,5])/sum(Alavancagem_Teste_A[1:10,5])
   
-  P_bom_acum_treino[i] <- sum(Alavancagem_Treino_C[1:i,4])/sum(Alavancagem_Treino_C[1:10,4])
-  P_bom_acum_valid[i] <- sum(Alavancagem_Treino_C[1:i,4])/sum(Alavancagem_Treino_C[1:10,4])
-  P_bom_acum_teste[i] <- sum(Alavancagem_Treino_C[1:i,4])/sum(Alavancagem_Treino_C[1:10,4])
+  P_bom_acum_treino[i] <- sum(Alavancagem_Treino_A[1:i,4])/sum(Alavancagem_Treino_A[1:10,4])
+  P_bom_acum_valid[i] <- sum(Alavancagem_Valid_A[1:i,4])/sum(Alavancagem_Valid_A[1:10,4])
+  P_bom_acum_teste[i] <- sum(Alavancagem_Teste_A[1:i,4])/sum(Alavancagem_Teste_A[1:10,4])
   
   KS_treino[i] <- -P_mau_acum_treino[i] + P_bom_acum_treino[i]
   KS_valid[i] <- -P_mau_acum_valid[i] + P_bom_acum_valid[i] 
   KS_teste[i] <- -P_mau_acum_teste[i] + P_bom_acum_teste[i] 
 }
-Alavancagem_Treino_C$'%mau acum' <- P_mau_acum_treino
-Alavancagem_Treino_C$'%bom acum' <- P_bom_acum_treino
-Alavancagem_Treino_C$'KS' <- KS_treino
+Alavancagem_Treino_A$'%mau acum' <- P_mau_acum_treino
+Alavancagem_Treino_A$'%bom acum' <- P_bom_acum_treino
+Alavancagem_Treino_A$'KS' <- KS_treino
 
-Alavancagem_Valid_C$'%mau acum' <- P_mau_acum_valid
-Alavancagem_Valid_C$'%bom acum' <- P_bom_acum_valid
-Alavancagem_Valid_C$'KS' <- KS_valid
+Alavancagem_Valid_A$'%mau acum' <- P_mau_acum_valid
+Alavancagem_Valid_A$'%bom acum' <- P_bom_acum_valid
+Alavancagem_Valid_A$'KS' <- KS_valid
 
-Alavancagem_Teste_C$'%mau acum' <- P_mau_acum_teste
-Alavancagem_Teste_C$'%bom acum' <- P_bom_acum_teste
-Alavancagem_Teste_C$'KS' <- KS_teste
+Alavancagem_Teste_A$'%mau acum' <- P_mau_acum_teste
+Alavancagem_Teste_A$'%bom acum' <- P_bom_acum_teste
+Alavancagem_Teste_A$'KS' <- KS_teste
+
 write.csv(Alavancagem_Treino_A,
-          file = "MyDirectory")
+          file = paste(mydirectory,
+                       "ALAVANCAGEM_TREINO_A.csv",
+                       sep = "\\"))
 write.csv(Alavancagem_Valid_A,
-          file = "MyDirectory")
+          file = paste(mydirectory,
+                       "ALAVANCAGEM_VALIDACAO_A.csv",
+                       sep = "\\"))
 write.csv(Alavancagem_Teste_A,
-          file = "MyDirectory")
+          file = paste(mydirectory,
+                       "ALAVANCAGEM_TESTE_A.csv",
+                       sep = "\\"))
+rm(Alavancagem_Treino_A,
+   Alavancagem_Valid_A,
+   Alavancagem_Teste_A)
+stopCluster(cluster)
