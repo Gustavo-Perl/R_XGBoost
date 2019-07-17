@@ -24,7 +24,7 @@ registerDoParallel(cluster)
 ###########################################################################
 #################### IMPORTO BASE E TRATO VARIAVEIS #######################
 ###########################################################################
-mydirectory = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\1.R\\4.AF_E"
+mydirectory = "MyDirectory"
 AF_RAIZ     <- read.csv(file = paste(mydirectory,
                                      "BASE_AF_10X.csv", sep = "\\"),
                         sep = ";", 
@@ -36,7 +36,7 @@ z <- substr(AF_RAIZ$SAFRA_EVENTO_MES,6,9)
 AF_RAIZ$SAFRA_EVENTO_MES<- lubridate::ymd(paste0(year  = z, 
                                                  month = y, 
                                                  day   = x))
-AF_RAIZ <- subset(AF_RAIZ, MOSAIC_CODE == c(15,16,17,18)) 
+#### CONFIDENTIAL CODE ####
 rm(x,
    y,
    z)
