@@ -1,0 +1,493 @@
+###########################################################################
+#################### IMPORTA LIBS E DEFINE ################################
+###########################################################################
+gc()
+rm(list = ls())
+library(caret)
+library(car)
+library(C50)
+library(ISLR)
+library(xgboost)
+library(MatrixModels)
+library(Matrix)
+library(gmodels)
+library(e1071)
+library(devtools)
+library(parallel)
+library(doParallel)
+library(Information)
+library(InformationValue)
+library(ROCR)
+library(dplyr)
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+###########################################################################
+#################### IMPORTO BASE E TRATO VARIAVEIS #######################
+###########################################################################
+mydirectory = "C:\\Users\\snf6123\\OneDrive for Business\\Compartilhado com Todos\\PERL\\SAS\\MACHINE LEARNING\\XGBOOST\\AF\\1.R\\AF_2\\2.AF_C"
+AF_RAIZ     <- read.csv(file = paste(mydirectory,
+                                     "BASE_C.csv", sep = "\\"),
+                        sep = ";", 
+                        stringsAsFactors = FALSE)
+AF_RAIZ$STATUS_N        <- as.numeric(AF_RAIZ$STATUS_N)
+x <- substr(AF_RAIZ$SAFRA,1,2)
+y <- substr(AF_RAIZ$SAFRA,3,5)
+z <- substr(AF_RAIZ$SAFRA,6,9)
+AF_RAIZ$SAFRA<- lubridate::ymd(paste0(year  = z, 
+                                      month = y, 
+                                      day   = x))
+rm(x,
+   y,
+   z)
+###########################################################################
+#################### SELECIONA AMOSTRAGEM #################################
+###########################################################################
+str(AF_RAIZ)
+set.seed(666)
+AF_RAIZ_random  <- AF_RAIZ[order(runif(NROW(AF_RAIZ))), ]
+AF_treino_valid <- subset(AF_RAIZ_random, SAFRA < "2019-05-01")
+
+smp_siz         <- floor(0.5*nrow(AF_treino_valid))
+for_train       <- sample(seq_len(nrow(AF_treino_valid)), size = smp_siz)
+
+AF_treino     <- AF_treino_valid[for_train, ]
+AF_validacao  <- AF_treino_valid[-for_train, ]
+AF_teste      <- subset(AF_RAIZ_random,SAFRA >= "2019-05-01")
+
+#CHECO SE A PROPORCAO DAS BASES ESTÃO CORRETA:
+prop.table(table(AF_RAIZ$STATUS_N))
+prop.table(table(AF_treino$STATUS_N))
+prop.table(table(AF_validacao$STATUS_N))
+prop.table(table(AF_teste$STATUS_N))
+rm(AF_RAIZ_random,
+   AF_treino_valid,
+   smp_siz,
+   for_train)
+###########################################################################
+#################### AJUSTO OS CAMPOS #####################################
+###########################################################################
+for (i in 1:NCOL(AF_treino))
+  AF_treino[,i]     <- as.numeric(AF_treino[,i])
+for (i in 1:NCOL(AF_validacao))
+  AF_validacao[,i]  <- as.numeric(AF_validacao[,i])
+for (i in 1:NCOL(AF_teste))
+  AF_teste[,i]      <- as.numeric(AF_teste[,i])
+AF_treino$SAFRA_EVENTO_MES    <- as.Date(AF_treino$SAFRA, 
+                                         origin = "1970-01-01")
+AF_validacao$SAFRA_EVENTO_MES <- as.Date(AF_validacao$SAFRA, 
+                                         origin = "1970-01-01")
+AF_teste$SAFRA_EVENTO_MES     <- as.Date(AF_teste$SAFRA, 
+                                         origin = "1970-01-01")
+###########################################################################
+#################### CONFIGURO CV XGBOOST #################################
+###########################################################################
+ks_vector_treino <- NULL
+ks_vector_valid  <- NULL
+ks_vector_teste  <- NULL
+ROC_vector_teste <- NULL
+nround_vector    <- NULL
+nfold_vector     <- NULL
+#eta_vector       <- NULL
+for(j in 1:5) #nfold
+{
+  j_ajust <- j*2
+  for(i in 1:10) #nrounds
+  {
+    i_ajust <- i*100
+    AF_treino$SCORE    <- NULL
+    AF_validacao$SCORE <- NULL
+    AF_teste$SCORE     <- NULL
+    AF_xgb <- xgboost(data             = data.matrix(AF_treino[,
+                                                               c(-1,
+                                                                 -2,
+                                                                 -3)]),
+                      label            = AF_treino$STATUS_N,
+                      
+                      verbose          = 1,
+                      nrounds          = 10000,
+                      nfold            = 10,
+                      
+                      scale_pos_weight = sum(AF_treino$STATUS_N == 0)/
+                                         sum(AF_treino$STATUS_N == 1),
+                      eta              = 0.05,
+                      booster          = 'gblinear',
+                      objective        = 'binary:logistic',
+                      eval_metric      = 'error',
+                      seed             = 666)
+    #PREDIÇÃO
+    AF_treino$SCORE     <- NULL
+    AF_validacao$SCORE  <- NULL
+    AF_teste$SCORE      <- NULL
+    AF_treino$SCORE     <- predict(AF_xgb,data.matrix(AF_treino[,c(-1,-2,-3)]),   type = "prob")
+    AF_validacao$SCORE  <- predict(AF_xgb,data.matrix(AF_validacao[,c(-1,-2,-3)]),type = "prob")
+    AF_teste$SCORE      <- predict(AF_xgb,data.matrix(AF_teste[,c(-1,-2,-3)]),    type = "prob")
+    #CALCULA KS E ROC CURVE
+    pred_xgb_treino <- prediction(AF_treino$SCORE,  AF_treino$STATUS_N)
+    pred_xgb_valid  <- prediction(AF_validacao$SCORE,AF_validacao$STATUS_N)
+    pred_xgb_teste  <- prediction(AF_teste$SCORE,    AF_teste$STATUS_N)
+    ROC_treino <-ROCR::performance(pred_xgb_treino,measure = "tpr",x.measure = "fpr")
+    ROC_valid  <-ROCR::performance(pred_xgb_valid,measure = "tpr",x.measure = "fpr")
+    ROC_teste  <-ROCR::performance(pred_xgb_teste,measure = "tpr",x.measure = "fpr")
+    ks_treino <- max(attr(ROC_treino,"y.values")[[1]] - (attr(ROC_treino,"x.values")[[1]]))
+    ks_valid  <- max(attr(ROC_valid,"y.values")[[1]]  - (attr(ROC_valid,"x.values")[[1]]))
+    ks_teste  <- max(attr(ROC_teste,"y.values")[[1]]  - (attr(ROC_teste,"x.values")[[1]]))
+    ROC.auc <- performance(pred_xgb_teste,measure = "auc")
+    #APENDA KS & ROC TESTE & ITERAÇÕES
+    ks_vector_treino   <- rbind(ks_vector_treino,ks_treino)
+    ks_vector_valid    <- rbind(ks_vector_valid, ks_valid)
+    ks_vector_teste    <- rbind(ks_vector_teste, ks_teste)
+    ROC_vector_teste   <- rbind(ROC_vector_teste,unlist(ROC.auc@y.values))
+    nround_vector      <- rbind(nround_vector,i_ajust)
+    #nfold_vector       <- rbind(nfold_vector,j_ajust)
+    print(i_ajust)
+  }
+  print(j_ajust)
+}
+infos2   <- data.frame('NRound'    = nround_vector,
+                      #'NFold'     = nfold_vector,
+                      'KS Treino' = ks_vector_treino,
+                      'KS Valid'  = ks_vector_valid,
+                      'KS Teste'  = ks_vector_teste,
+                      'ROC Teste' = ROC_vector_teste)
+
+###########################################################################
+#################### CONFIGURO XGBOOST ####################################
+###########################################################################
+AF_treino$SCORE <- NULL
+AF_validacao$SCORE <- NULL
+AF_teste$SCORE <- NULL
+AF_xgb <- xgboost(data            = data.matrix(AF_treino[,c(-1,-2,-3)]),
+                  label           = AF_treino$STATUS_N,
+                  
+                  verbose         = 1,
+                  nrounds         = 156,
+                  nfold           = 10,
+                  scale_pos_weight = sum(AF_treino$STATUS_N == 0)/
+                                     sum(AF_treino$STATUS_N == 1),
+                  eta             = 0.05,     
+                  booster         = 'gblinear',
+                  objective       = 'binary:logistic',
+                  eval_metric     = 'error',
+                  seed            = 666)
+importance <- xgb.importance(model = AF_xgb)
+importance$ajustado <- abs(importance$Weight)
+importance$'%' <- importance$ajustado/sum(importance$ajustado)
+importance$'% acum' <- importance[1,4]
+for(i in 2:nrow(importance))
+{
+  importance[i,5] <- importance[i,4] + importance [i-1,5]
+}
+
+pdf(file = paste(mydirectory,
+                 "1_Importancia_100.pdf",
+                 sep = "\\"),
+    width=6,
+    height=6)
+xgb.plot.importance(importance,
+                    rel_to_first = FALSE,
+                    main = "Importancia das Variaveis - 100%",
+                    xlab = "Importancia na Resposta")
+dev.off()
+###########################################################################
+#################### PREDIÇÃO DA XGBOOST ##################################
+###########################################################################
+AF_treino$SCORE <- NULL
+AF_treino$SCORE <- predict(AF_xgb,
+                           data.matrix(AF_treino[,c(-1,-2,-3)]),
+                           type = "prob")
+AF_validacao$SCORE <- NULL
+AF_validacao$SCORE <- predict(AF_xgb,
+                              data.matrix(AF_validacao[,c(-1,-2,-3)]),
+                              type = "prob")
+AF_teste$SCORE <- NULL
+AF_teste$SCORE <- predict(AF_xgb,
+                          data.matrix(AF_teste[,c(-1,-2,-3)]),
+                          type = "prob")
+###########################################################################
+#################### AVALIA A PERFORMANCE DO MODELO #######################
+###########################################################################
+pred_xgb_treino <- prediction(AF_treino$SCORE,
+                             AF_treino$STATUS_N)
+ROC_treino <-ROCR::performance(pred_xgb_treino,
+                               measure = "tpr",
+                               x.measure = "fpr")
+ks_treino   <- max(attr(ROC_treino,
+                        "y.values")[[1]] - (attr(ROC_treino,
+                                                 "x.values")[[1]]))
+
+pred_xgb_valid <- prediction(AF_validacao$SCORE,
+                             AF_validacao$STATUS_N)
+ROC_valid <-ROCR::performance(pred_xgb_valid,
+                              measure = "tpr",
+                              x.measure = "fpr")
+ks_valid   <- max(attr(ROC_valid,
+                       "y.values")[[1]] - (attr(ROC_valid,
+                                                "x.values")[[1]]))
+
+pred_xgb_teste <- prediction(AF_teste$SCORE,
+                             AF_teste$STATUS_N)
+ROC_teste <-ROCR::performance(pred_xgb_teste,
+                              measure = "tpr",
+                              x.measure = "fpr")
+ks_teste <- max(attr(ROC_teste,
+                     "y.values")[[1]] - (attr(ROC_teste,
+                                              "x.values")[[1]]))
+
+ks_treino
+ks_valid
+ks_teste
+rm(AF_xgb,
+   pred_xgb_treino,
+   pred_xgb_valid)
+###########################################################################
+#################### PLOTA GRÁFICOS #######################################
+###########################################################################
+pdf(file = paste(mydirectory,
+                 "3_ROC_Curves.pdf",
+                 sep = "\\"),
+    width=6,
+    height=6)
+plot(ROC_treino,
+     col = "blue",
+     main=paste0('KS Treino = ',
+                 round(ks_treino*100,1),
+                 '% - KS Valid. = ',
+                 round(ks_valid*100,1),
+                 '% - KS Teste = ',
+                 round(ks_teste*100,1),'%'))
+plot(ROC_teste,
+     add = TRUE,
+     col = "red")
+plot(ROC_valid,
+     add = TRUE,
+     col = "yellow")
+lines(x=c(0,1),
+      y=c(0,1))
+dev.off()
+rm(ks_treino,
+   ks_valid,
+   ks_teste,
+   ROC_treino,
+   ROC_valid,
+   ROC_teste)
+###########################################################################
+#################### CALCULA AUC - AREA UNDER the CURVE ###################
+###########################################################################
+ROC.auc <- performance(pred_xgb_teste,measure = "auc")
+unlist(ROC.auc@y.values)
+rm(ROC.auc,
+   pred_xgb_teste)
+###########################################################################
+#################### CALCULA ESTABILIDADE DO KS ###########################
+###########################################################################
+ks_vector <- NULL
+interaction_vector <- NULL
+for(i in 1:200)
+{
+  base.treino.ks <- sample_n(AF_treino, 0.05*nrow(AF_treino), replace =TRUE)
+  AF_xgb <- xgboost(data            = data.matrix(base.treino.ks[,c(-1,-2,-3)]),
+                    label           = base.teste.ks$STATUS_N,
+                    verbose         = 0, 
+                    nrounds         = 10000,
+                    nfold           = 10,
+                    scale_pos_weight = sum(AF_treino$STATUS_N == 0)/
+                                       sum(AF_treino$STATUS_N == 1),
+                    eta             = 0.05,    
+                    booster         = 'gblinear',
+                    objective       = 'binary:logistic',
+                    eval_metric     = 'error', 
+                    seed            = 666)
+  pred_teste_treino.ks <- predict(AF_xgb,
+                                  data.matrix(base.treino.ks[,c(-1,-2,-3)]),
+                                  type = "prob")
+  pred_xgb_treino_teste.ks <- prediction(pred_teste_treino.ks,
+                                         base.treino.ks$STATUS_N)
+  ROC_treino_teste.ks <-ROCR::performance(pred_xgb_treino_teste.ks,
+                                          measure = "tpr",
+                                          x.measure = "fpr")
+  ks_treino_teste.ks  <- max(attr(ROC_treino_teste.ks,
+                                  "y.values")[[1]] - (attr(ROC_treino_teste.ks,
+                                                           "x.values")[[1]]))
+  ks_vector          <- rbind(ks_vector,
+                              ks_treino_teste.ks)
+  interaction_vector <- rbind(interaction_vector,
+                              i)
+  print(i)
+}
+ks.base <- data.frame('ks'=ks_vector,
+                      'interaction'=interaction_vector)
+ks.base
+pdf(file = paste(mydirectory,
+                 "4_Distribuição_KS_treino.pdf",
+                 sep = "\\"),
+    width=6,
+    height=6)
+plot(ks.base$ks,
+     type = "l",
+     main = paste0("Distribuição KS x 200 amostras de treino"),
+     xlab = "Número da Interação",
+     ylab = "KS",
+     ylim = c(0,1),
+     xlim = c(min(ks.base$interaction), max(ks.base$interaction)))
+dev.off()
+
+rm(ks_vector,
+   interaction_vector,
+   base.teste.ks,
+   AF_xgb,
+   pred_xgb_teste_teste.ks,
+   ROC_teste_teste.ks,
+   ks_teste_teste.ks,
+   ks.base)
+###########################################################################
+#################### PREPARA ALAVANCAGEM '#################################
+###########################################################################
+Alavancagem_treino_C <- AF_treino %>% 
+  mutate(FX_SCORE = ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[1],"U",
+                           ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[2],"T",
+                                  ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[3],"S",
+                                         ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[4],"R",
+                                                ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[5],"Q",
+                                                       ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[6],"P",
+                                                              ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[7],"O",
+                                                                     ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[8],"N",
+                                                                            ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[9],"M",
+                                                                                   ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[10],"L",
+                                                                                          ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[11],"K",
+                                                                                                 ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[12],"J",
+                                                                                                        ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[13],"I",
+                                                                                                               ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[14],"H",
+                                                                                                                      ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[15],"G",
+                                                                                                                             ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[16],"F",
+                                                                                                                                    ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[17],"E",
+                                                                                                                                           ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[18],"D",
+                                                                                                                                                  ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[19],"C",
+                                                                                                                                                         ifelse(AF_treino$SCORE <= quantile(AF_treino$SCORE, prob = seq(0,1,length=21),type = 5)[20],"B","A"))))))))))))))))))))) %>% 
+  group_by(FX_SCORE) %>% 
+  summarise(qtd_tot = n(),
+            mix = n()/nrow(AF_treino),
+            qtd_bom = sum(STATUS_N == 1, na.rm = T),
+            qtd_mau = sum(STATUS_N == 0, na.rm = T)) %>%
+  mutate(ODD = (qtd_bom/sum(qtd_bom))/(qtd_mau/sum(qtd_mau)))
+
+Alavancagem_Validacao_C <- AF_validacao %>% 
+  mutate(FX_SCORE = ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[1],"U",
+                           ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[2],"T",
+                                  ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[3],"S",
+                                         ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[4],"R",
+                                                ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[5],"Q",
+                                                       ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[6],"P",
+                                                              ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[7],"O",
+                                                                     ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[8],"N",
+                                                                            ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[9],"M",
+                                                                                   ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[10],"L",
+                                                                                          ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[11],"K",
+                                                                                                 ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[12],"J",
+                                                                                                        ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[13],"I",
+                                                                                                               ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[14],"H",
+                                                                                                                      ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[15],"G",
+                                                                                                                             ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[16],"F",
+                                                                                                                                    ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[17],"E",
+                                                                                                                                           ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[18],"D",
+                                                                                                                                                  ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[19],"C",
+                                                                                                                                                         ifelse(AF_validacao$SCORE <= quantile(AF_validacao$SCORE, prob = seq(0,1,length=21),type = 5)[20],"B","A"))))))))))))))))))))) %>% 
+  group_by(FX_SCORE) %>% 
+  summarise(qtd_tot = n(),
+            mix = n()/nrow(AF_validacao),
+            qtd_bom = sum(STATUS_N == 1, na.rm = T),
+            qtd_mau = sum(STATUS_N == 0, na.rm = T)) %>%
+  mutate(ODD = (qtd_bom/sum(qtd_bom))/(qtd_mau/sum(qtd_mau)))
+
+Alavancagem_Teste_C <- AF_teste %>% 
+  mutate(FX_SCORE = ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[1],"U",
+                           ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[2],"T",
+                                  ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[3],"S",
+                                         ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[4],"R",
+                                                ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[5],"Q",
+                                                       ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[6],"P",
+                                                              ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[7],"O",
+                                                                     ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[8],"N",
+                                                                            ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[9],"M",
+                                                                                   ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[10],"L",
+                                                                                          ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[11],"K",
+                                                                                                 ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[12],"J",
+                                                                                                        ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[13],"I",
+                                                                                                               ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[14],"H",
+                                                                                                                      ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[15],"G",
+                                                                                                                             ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[16],"F",
+                                                                                                                                    ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[17],"E",
+                                                                                                                                           ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[18],"D",
+                                                                                                                                                  ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[19],"C",
+                                                                                                                                                         ifelse(AF_teste$SCORE <= quantile(AF_teste$SCORE, prob = seq(0,1,length=21),type = 5)[20],"B","A"))))))))))))))))))))) %>%
+  group_by(FX_SCORE) %>% 
+  summarise(qtd_tot = n(),
+            mix = n()/nrow(AF_teste),
+            qtd_bom = sum(STATUS_N == 1, na.rm = T),
+            qtd_mau = sum(STATUS_N == 0, na.rm = T))  %>%
+  mutate(ODD = (qtd_bom/sum(qtd_bom))/(qtd_mau/sum(qtd_mau)))
+
+#Alavancagem_Teste_C %>% 
+#  group_by(FX_SCORE) %>% 
+#  summarise(qtd = n(),
+#            dist = 100*(n()/nrow(Alavancagem_Teste_C)),
+#            qtd_mau = sum(STATUS_N == 0,na.rm = T),
+#            qtd_bom = sum(STATUS_N == 1,na.rm = T),
+#            tx_mau = 100*(1 - mean(STATUS_N, na.rm = T))) %>% 
+#  mutate(acum_mau = cumsum(qtd_mau),
+#         acum_bom = cumsum(qtd_bom)) %>% 
+#  arrange(desc(FX_SCORE)) %>% 
+#  mutate(MAU_ACUM_TOTAL = 100*(acum_mau/(acum_mau + acum_bom))) %>% 
+#  arrange(FX_SCORE) %>% data.frame() 
+
+
+P_mau_Ccum_treino <- NULL
+P_bom_Ccum_teste <- NULL
+P_mau_Ccum_valid <- NULL
+P_bom_Ccum_treino <- NULL
+P_mau_Ccum_teste <- NULL
+P_bom_Ccum_valid <- NULL
+KS_treino <- NULL
+KS_valid <- NULL
+KS_teste <- NULL
+for(i in 1:21)
+{
+  P_mau_Ccum_treino[i] <- sum(Alavancagem_treino_C[1:i,5])/sum(Alavancagem_treino_C[1:21,5])
+  P_mau_Ccum_valid[i] <- sum(Alavancagem_Validacao_C[1:i,5])/sum(Alavancagem_Validacao_C[1:21,5])
+  P_mau_Ccum_teste[i] <- sum(Alavancagem_Teste_C[1:i,5])/sum(Alavancagem_Teste_C[1:21,5])
+  
+  P_bom_Ccum_treino[i] <- sum(Alavancagem_treino_C[1:i,4])/sum(Alavancagem_treino_C[1:21,4])
+  P_bom_Ccum_valid[i] <- sum(Alavancagem_Validacao_C[1:i,4])/sum(Alavancagem_Validacao_C[1:21,4])
+  P_bom_Ccum_teste[i] <- sum(Alavancagem_Teste_C[1:i,4])/sum(Alavancagem_Teste_C[1:21,4])
+  
+  KS_treino[i] <- -P_mau_Ccum_treino[i] + P_bom_Ccum_treino[i]
+  KS_valid[i] <- -P_mau_Ccum_valid[i] + P_bom_Ccum_valid[i] 
+  KS_teste[i] <- -P_mau_Ccum_teste[i] + P_bom_Ccum_teste[i] 
+}
+Alavancagem_treino_C$'%mau acum' <- P_mau_Ccum_treino
+Alavancagem_treino_C$'%bom acum' <- P_bom_Ccum_treino
+Alavancagem_treino_C$'KS' <- KS_treino
+
+Alavancagem_Validacao_C$'%mau acum' <- P_mau_Ccum_valid
+Alavancagem_Validacao_C$'%bom acum' <- P_bom_Ccum_valid
+Alavancagem_Validacao_C$'KS' <- KS_valid
+
+Alavancagem_Teste_C$'%mau acum' <- P_mau_Ccum_teste
+Alavancagem_Teste_C$'%bom acum' <- P_bom_Ccum_teste
+Alavancagem_Teste_C$'KS' <- KS_teste
+
+write.csv(Alavancagem_treino_C,
+          file = paste(mydirectory,
+                       "ALAVANCAGEM_TREINO_C.csv",
+                       sep = "\\"))
+write.csv(Alavancagem_Validacao_C,
+          file = paste(mydirectory,
+                       "ALAVANCAGEM_VALIDACAO_C.csv",
+                       sep = "\\"))
+write.csv(Alavancagem_Teste_C,
+          file = paste(mydirectory,
+                       "ALAVANCAGEM_TESTE_C.csv",
+                       sep = "\\"))
+rm(Alavancagem_treino_C,
+   Alavancagem_Validacao_C,
+   Alavancagem_Teste_C)
+stopCluster(cluster)
